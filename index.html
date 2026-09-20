@@ -158,6 +158,9 @@ body.dragging .pomo{outline:2px dashed var(--signal-strong);outline-offset:3px}
 .ghost{background:none;border:0;color:var(--ink-2);width:34px;height:34px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;padding:0}
 .ghost.sm{width:28px;height:28px}
 .ghost:hover{background:var(--soft);color:var(--ink)}
+.btn.on{background:var(--signal);color:var(--signal-ink);border-color:transparent}
+.chk{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-2);margin-top:8px;cursor:pointer}
+.chk input{width:auto;min-height:0;accent-color:var(--brand)}
 .ghost.on{background:var(--signal);color:var(--signal-ink)}
 .lnk{background:none;border:0;padding:0;color:var(--brand);font-weight:600;font-size:12px;cursor:pointer}
 .lnk:hover{text-decoration:underline}
@@ -491,6 +494,7 @@ const ICONS = {
   play:'<path d="M8 5l11 7-11 7z" fill="currentColor"/>',
   pause:'<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/>',
   reset:'<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
+  pip:'<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor" stroke="none"/>',
   skip:'<path d="M5 5l10 7-10 7z"/><path d="M19 5v14"/>',
   dots:'<circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/>'
 };
@@ -1427,6 +1431,7 @@ function pomoHTML(){
         <button class="btn primary" data-act="t-toggle">${ic(t.running?'pause':'play',14)} ${t.running?'Pausar':started?'Continuar':'Iniciar'}</button>
         <button class="btn icon-btn" data-act="t-reset" aria-label="Reiniciar" title="Reiniciar">${ic('reset',16)}</button>
         <button class="btn icon-btn" data-act="t-skip" aria-label="Pular" title="Pular">${ic('skip',16)}</button>
+        ${pipSupported()?`<button class="btn icon-btn ${pipWin?'on':''}" data-act="pip" aria-label="${pipWin?'Fechar':'Abrir'} janela flutuante" aria-pressed="${!!pipWin}" title="Janela flutuante: mostra o tempo sobre os outros programas">${ic('pip',16)}</button>`:''}
       </div>
       <div class="cycle" aria-label="Ciclo atual">${Array.from({length:st.every},(_,i)=>`<i class="${i<inSet?'on':''}"></i>`).join('')}</div>
       <div id="focusDrop" class="drop ${ft?'has':''}">${ft?`<span class="dt" title="${esc(ft.title)}">${esc(ft.title)}</span><button class="ghost sm" data-act="focus-clear" aria-label="Remover tarefa do foco">${ic('x',14)}</button>`:(mq('(hover: none)') ? 'Toque no cronômetro de uma tarefa' : 'Arraste uma tarefa para cá')}</div>
@@ -1438,7 +1443,8 @@ function pomoHTML(){
         <label>Pausa curta<input type="number" min="1" max="60" data-set="short" value="${st.short}"></label>
         <label>Pausa longa<input type="number" min="1" max="90" data-set="long" value="${st.long}"></label>
         <label>Ciclos até a longa<input type="number" min="2" max="10" data-set="every" value="${st.every}"></label>
-      </div></details>
+      </div>
+      ${pipSupported()?`<label class="chk"><input type="checkbox" data-pip-auto ${S.ui.pipAuto?'checked':''}> Abrir a janela flutuante ao iniciar o foco</label>`:`<p class="hint" style="margin-top:8px">A janela flutuante funciona no Chrome e no Edge, no computador.</p>`}</details>
     </div></section>`;
 }
 function renderDock(){ $('#dockBody').innerHTML = (view==='rotina' ? rotTotals() : taskTotals()) + pomoHTML(); }
@@ -1452,7 +1458,85 @@ function updateTimerUI(){
   const ct = $('#chipTime'); if(ct) ct.textContent = act ? txt : 'Foco';
   const dl = $('#dockTabLabel'); if(dl) dl.textContent = act ? txt : 'Foco';
   document.title = t.running ? `${txt} Gerenciador de Tempo` : 'Gerenciador de Tempo';
+  updatePip(); updateFavicon(rem);
 }
+/* ---- janela flutuante (Picture-in-Picture de documento: Chrome e Edge no computador) ---- */
+let pipWin = null, favLink = null, favOrig = '', favKey = '';
+const pipSupported = () => 'documentPictureInPicture' in window;
+function buildPip(w){
+  const d = w.document, cs = getComputedStyle(document.documentElement), root = d.documentElement;
+  ['--bg','--surface','--ink','--ink-2','--line','--soft','--brand','--brand-ink','--signal','--signal-ink','--signal-strong','--display','--body']
+    .forEach(v => root.style.setProperty(v, cs.getPropertyValue(v)));
+  d.title = 'Foco';
+  const st = d.createElement('style');
+  st.textContent = `*{box-sizing:border-box}html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body),system-ui,sans-serif;display:grid;place-items:center;padding:10px;transition:background .3s}
+    body.flash{animation:fl 1s ease-in-out 6}@keyframes fl{50%{background:var(--signal)}}
+    @media (prefers-reduced-motion:reduce){body.flash{animation:none;background:var(--signal)}}
+    .p{width:100%;display:grid;gap:7px;text-align:center}
+    .m{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:600;color:var(--ink-2)}
+    .m b{color:var(--ink)}.m span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .t{font:700 48px/1 var(--display),system-ui,sans-serif;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+    .bar{height:6px;border-radius:99px;background:var(--soft);overflow:hidden}
+    .bar i{display:block;height:100%;width:0;background:var(--brand);border-radius:99px;transition:width .5s linear}
+    .brk .bar i{background:var(--signal-strong)}
+    .btns{display:flex;gap:6px}
+    button{font:inherit;font-weight:700;font-size:13px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:9px;min-height:34px;padding:0 12px;cursor:pointer}
+    button.go{flex:1;background:var(--brand);color:var(--brand-ink);border-color:transparent}
+    button:focus-visible{outline:3px solid var(--signal-strong);outline-offset:2px}`;
+  d.head.appendChild(st);
+  d.body.innerHTML = `<div class="p" id="pRoot"><div class="m"><b id="pMode">Foco</b><span id="pTask"></span></div>
+    <div class="t" id="pTime" role="timer">25:00</div><div class="bar"><i id="pBar"></i></div>
+    <div class="btns"><button class="go" id="pGo">Iniciar</button><button id="pReset" title="Reiniciar" aria-label="Reiniciar">Reiniciar</button><button id="pSkip" title="Pular" aria-label="Pular">Pular</button></div></div>`;
+  d.getElementById('pGo').onclick = () => { S.timer.running ? pauseTimer() : startTimer(); };
+  d.getElementById('pReset').onclick = () => resetTimer();
+  d.getElementById('pSkip').onclick = () => skipTimer();
+}
+function updatePip(){
+  if(!pipWin) return;
+  try{
+    const d = pipWin.document, t = S.timer, rem = timerRemaining(), tot = modeMs(t.mode), secs = Math.ceil(rem/1000);
+    const started = t.running || t.remaining < tot, ft = t.taskId ? findTask(t.taskId) : null;
+    const set = (id, v) => { const e = d.getElementById(id); if(e && e.textContent !== v) e.textContent = v; };
+    set('pTime', `${pad(Math.floor(secs/60))}:${pad(secs%60)}`); set('pMode', MODE_NAME[t.mode]);
+    set('pTask', ft ? ft.title : 'Sem tarefa vinculada'); set('pGo', t.running ? 'Pausar' : started ? 'Continuar' : 'Iniciar');
+    const bar = d.getElementById('pBar'); if(bar) bar.style.width = Math.max(0, Math.min(100, (1 - rem/tot) * 100)) + '%';
+    const root = d.getElementById('pRoot'); if(root) root.classList.toggle('brk', t.mode !== 'focus');
+    d.title = t.running ? `${pad(Math.floor(secs/60))}:${pad(secs%60)} ${MODE_NAME[t.mode]}` : 'Foco';
+  }catch(e){}
+}
+function pipFlash(){ if(!pipWin) return; try{ pipWin.document.body.classList.remove('flash'); void pipWin.document.body.offsetWidth; pipWin.document.body.classList.add('flash'); setTimeout(()=>{ try{ pipWin && pipWin.document.body.classList.remove('flash'); }catch(e){} }, 7000); }catch(e){} }
+async function openPip(){
+  if(!pipSupported() || pipWin) return;
+  try{
+    const w = await window.documentPictureInPicture.requestWindow({width:300, height:172});
+    pipWin = w; buildPip(w);
+    w.addEventListener('pagehide', () => { pipWin = null; renderDock(); updateTimerUI(); });
+    renderDock(); updateTimerUI();
+  }catch(e){ toast('Não foi possível abrir a janela flutuante. Toque no botão de novo.'); }
+}
+function togglePip(){ if(pipWin){ try{ pipWin.close(); }catch(e){} pipWin = null; renderDock(); updateTimerUI(); } else openPip(); }
+
+/* ícone da aba com os minutos restantes (funciona em qualquer navegador) */
+function updateFavicon(rem){
+  if(!favLink){
+    favLink = document.querySelector('link[rel~="icon"]');
+    if(!favLink){ favLink = document.createElement('link'); favLink.rel = 'icon'; document.head.appendChild(favLink); }
+    favOrig = favLink.getAttribute('href') || '';
+  }
+  const key = S.timer.running ? S.timer.mode + Math.ceil(rem/60000) : '';
+  if(key === favKey) return; favKey = key;
+  if(!key){ if(favOrig) favLink.setAttribute('href', favOrig); else favLink.removeAttribute('href'); return; }
+  try{
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); if(!g) return;
+    g.fillStyle = S.timer.mode==='focus' ? '#0E6B4A' : '#B58900'; g.beginPath();
+    if(g.roundRect) g.roundRect(0, 0, 64, 64, 14); else g.rect(0, 0, 64, 64); g.fill();
+    g.fillStyle = '#fff'; g.font = 'bold 40px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(Math.ceil(rem/60000)), 32, 36);
+    favLink.type = 'image/png'; favLink.setAttribute('href', c.toDataURL('image/png'));
+  }catch(e){}
+}
+
 function askNotify(){ try{ if('Notification' in window && Notification.permission==='default') Notification.requestPermission(); }catch(e){} }
 function notifyUser(title, body){ try{ if('Notification' in window && Notification.permission==='granted') new Notification(title,{body}); }catch(e){} }
 function beep(){
@@ -1462,7 +1546,7 @@ function beep(){
   }catch(e){}
   try{ navigator.vibrate && navigator.vibrate([200,100,200]); }catch(e){}
 }
-function startTimer(){ const t=S.timer; if(t.running) return; if(t.remaining<=0) t.remaining=modeMs(t.mode); t.endsAt=Date.now()+t.remaining; t.running=true; persist(); askNotify(); render(); }
+function startTimer(){ const t=S.timer; if(t.running) return; if(t.remaining<=0) t.remaining=modeMs(t.mode); t.endsAt=Date.now()+t.remaining; t.running=true; persist(); askNotify(); if(S.ui.pipAuto && pipSupported() && !pipWin) openPip(); render(); }
 function pauseTimer(){ const t=S.timer; if(!t.running) return; t.remaining=Math.max(0,t.endsAt-Date.now()); t.running=false; t.endsAt=null; persist(); render(); }
 function resetTimer(){ const t=S.timer; t.running=false; t.endsAt=null; t.remaining=modeMs(t.mode); persist(); render(); }
 function setMode(m){ const t=S.timer; t.mode=m; t.running=false; t.endsAt=null; t.remaining=modeMs(m); persist(); render(); }
@@ -1476,7 +1560,7 @@ function finishTimer(notify){
   } else t.mode = 'focus';
   t.running=false; t.endsAt=null; t.remaining=modeMs(t.mode);
   persist();
-  if(notify){ beep(); notifyUser(was==='focus'?'Pomodoro concluído':'Pausa encerrada', was==='focus'?'Hora de uma pausa.':'Hora de voltar ao foco.'); }
+  if(notify){ beep(); pipFlash(); notifyUser(was==='focus'?'Pomodoro concluído':'Pausa encerrada', was==='focus'?'Hora de uma pausa.':'Hora de voltar ao foco.'); }
   render();
 }
 setInterval(()=>{ if(S.timer.running && timerRemaining()<=0) finishTimer(true); else updateTimerUI(); }, 500);
@@ -1778,6 +1862,7 @@ document.addEventListener('click', e=>{
     case 'mode': setMode(el.dataset.mode); break;
     case 't-toggle': S.timer.running ? pauseTimer() : startTimer(); break;
     case 't-reset': resetTimer(); break;
+    case 'pip': togglePip(); break;
     case 't-skip': skipTimer(); break;
     case 'data': openData(); break;
     case 'sync-now': pullSince(); pushNow(); break;
@@ -1832,6 +1917,7 @@ document.addEventListener('change', e=>{
   if(el.id==='rdateInput'){ setRday(el.value || null); }
   else if(ds.f==='due'){ draft.due = el.value || today(); renderTaskDialog(); }
   else if(el.id==='focusTask'){ S.timer.taskId = el.value || null; persist(); render(); }
+  else if(ds.pipAuto !== undefined){ S.ui.pipAuto = el.checked; persist(); }
   else if(ds.note){
     const card = el.closest('[data-id]'), T = rdate();
     if(card){ S.routineNote[T] = S.routineNote[T] || {}; if(el.value.trim()) S.routineNote[T][card.dataset.id] = el.value.trim(); else delete S.routineNote[T][card.dataset.id]; persist(); }
